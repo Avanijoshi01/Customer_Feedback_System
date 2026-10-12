@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Feedback Analytics Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #16213e;
+      color: #fff;
+      padding: 1.5rem 2rem;
+    }
+
+    header h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    main {
+      max-width: 1200px;
+      margin: 2rem auto;
+      padding: 0 1.5rem;
+    }
+
+    /* ── Summary cards ─────────────────────────────────── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2.5rem;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 1.4rem 1.2rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+      text-align: center;
+    }
+
+    .card h2 {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: #666;
+      margin-bottom: 0.6rem;
+    }
+
+    .card .value {
+      font-size: 2rem;
+      font-weight: 800;
+      color: #16213e;
+    }
+
+    .card.positive .value { color: #2ecc71; }
+    .card.neutral  .value { color: #f39c12; }
+    .card.negative .value { color: #e74c3c; }
+
+    /* ── Chart grid ────────────────────────────────────── */
+    .charts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 720px) {
+      .charts { grid-template-columns: 1fr; }
+    }
+
+    .chart-card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 1.5rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+    }
+
+    .chart-card.full-width {
+      grid-column: 1 / -1;
+    }
+
+    .chart-card h2 {
+      font-size: 0.9rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #444;
+      margin-bottom: 1rem;
+    }
+
+    /* ── Loading / error state ─────────────────────────── */
+    #loading {
+      text-align: center;
+      padding: 4rem;
+      font-size: 1.1rem;
+      color: #666;
+    }
+
+    #error-msg {
+      display: none;
+      background: #fdecea;
+      border: 1px solid #e74c3c;
+      color: #c0392b;
+      border-radius: 8px;
+      padding: 1rem 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Feedback Analytics Dashboard</h1>
+</header>
+
+<main>
+  <div id="error-msg" role="alert" aria-live="assertive"></div>
+  <div id="loading" aria-live="polite">Loading analytics data…</div>
+
+  <div id="dashboard" hidden>
+
+    <!-- Summary cards -->
+    <section aria-label="Summary metrics">
+      <div class="cards">
+        <div class="card">
+          <h2>Total Submissions</h2>
+          <p class="value" id="stat-total">—</p>
+        </div>
+        <div class="card">
+          <h2>Average Rating</h2>
+          <p class="value" id="stat-avg">—</p>
+        </div>
+        <div class="card positive">
+          <h2>Positive (Rating)</h2>
+          <p class="value" id="stat-positive">—</p>
+        </div>
+        <div class="card neutral">
+          <h2>Neutral (Rating)</h2>
+          <p class="value" id="stat-neutral">—</p>
+        </div>
+        <div class="card negative">
+          <h2>Negative (Rating)</h2>
+          <p class="value" id="stat-negative">—</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Charts — single two-column grid container (desktop), stacks on mobile -->
+    <section aria-label="Charts" class="charts">
+
+      <div class="chart-card">
+        <h2>Rating Distribution</h2>
+        <div class="chart-container">
+          <canvas id="ratingChart" role="img" aria-label="Bar chart showing feedback count for each rating 1 to 5"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <h2>Feedback Volume Over Time</h2>
+        <div class="chart-container">
+          <canvas id="volumeChart" role="img" aria-label="Line chart showing number of feedback submissions per day over time"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card full-width">
+        <h2>Top Complaint Categories</h2>
+        <div class="chart-container">
+          <canvas id="categoryChart" role="img" aria-label="Bar chart showing count of feedback for each complaint category"></canvas>
+        </div>
+      </div>
+
+    </section>
+
+  </div><!-- /#dashboard -->
+</main>
+
+<script>
+  async function loadAnalytics() {
+    const loadingEl   = document.getElementById('loading');
+    const errorEl     = document.getElementById('error-msg');
+    const dashboardEl = document.getElementById('dashboard');
+
+    try {
+      const response = await fetch('/api/analytics');
+      if (!response.ok) {
+        throw new Error('Server returned ' + response.status + ' ' + response.statusText);
+      }
+      const data = await response.json();
+
+      // ── Populate summary cards ─────────────────────────────────────
+      document.getElementById('stat-total').textContent    = data.totalSubmissions.toLocaleString();
+      document.getElementById('stat-avg').textContent      = data.averageRating.toFixed(2);
+      document.getElementById('stat-positive').textContent = data.ratingClassification.positive.toFixed(1) + '%';
+      document.getElementById('stat-neutral').textContent  = data.ratingClassification.neutral.toFixed(1)  + '%';
+      document.getElementById('stat-negative').textContent = data.ratingClassification.negative.toFixed(1) + '%';
+
+      // ── Chart defaults ─────────────────────────────────────────────
+      Chart.defaults.font.family = 'system-ui, -apple-system, sans-serif';
+      Chart.defaults.color = '#444';
+
+      // ── Rating distribution (bar chart) ───────────────────────────
+      new Chart(document.getElementById('ratingChart'), {
+        type: 'bar',
+        data: {
+          labels: data.ratingDistribution.map(function(r) { return '\u2605 ' + r.rating; }),
+          datasets: [{
+            label: 'Submissions',
+            data: data.ratingDistribution.map(function(r) { return r.count; }),
+            backgroundColor: [
+              '#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#27ae60',
+            ],
+            borderRadius: 4,
+          }],
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: function(ctx) { return ' ' + ctx.parsed.y + ' submissions'; } } },
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { precision: 0 },
+              title: { display: true, text: 'Count' },
+            },
+            x: { title: { display: true, text: 'Rating' } },
+          },
+        },
+      });
+
+      // ── Top categories (horizontal bar chart) ─────────────────────
+      new Chart(document.getElementById('categoryChart'), {
+        type: 'bar',
+        data: {
+          labels: data.topCategories.map(function(c) { return c.category.replace(/_/g, ' '); }),
+          datasets: [{
+            label: 'Submissions',
+            data: data.topCategories.map(function(c) { return c.count; }),
+            backgroundColor: '#4361ee',
+            borderRadius: 4,
+          }],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: function(ctx) { return ' ' + ctx.parsed.x + ' submissions'; } } },
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              ticks: { precision: 0 },
+              title: { display: true, text: 'Count' },
+            },
+          },
+        },
+      });
+
+      // ── Volume over time (line chart) ─────────────────────────────
+      new Chart(document.getElementById('volumeChart'), {
+        type: 'line',
+        data: {
+          labels: data.volumeOverTime.map(function(v) { return v.date; }),
+          datasets: [{
+            label: 'Feedback submissions',
+            data: data.volumeOverTime.map(function(v) { return v.count; }),
+            borderColor: '#4361ee',
+            backgroundColor: 'rgba(67, 97, 238, 0.1)',
+            pointRadius: 4,
+            tension: 0.3,
+            fill: true,
+          }],
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: function(ctx) { return ' ' + ctx.parsed.y + ' submissions'; } } },
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { precision: 0 },
+              title: { display: true, text: 'Count' },
+            },
+            x: { title: { display: true, text: 'Date' } },
+          },
+        },
+      });
+
+      // ── Show dashboard, hide loader ────────────────────────────────
+      loadingEl.hidden   = true;
+      dashboardEl.hidden = false;
+
+    } catch (err) {
+      loadingEl.hidden      = true;
+      errorEl.style.display = 'block';
+      errorEl.textContent   = 'Failed to load analytics: ' + err.message;
+      console.error(err);
+    }
+  }
+
+  loadAnalytics();
+</script>
+
+</body>
+</html>
